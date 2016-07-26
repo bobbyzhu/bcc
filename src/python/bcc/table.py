@@ -15,6 +15,7 @@
 from collections import MutableMapping
 import ctypes as ct
 import multiprocessing
+import os
 
 from .libbcc import lib, _RAW_CB_TYPE
 from subprocess import check_output
@@ -165,7 +166,8 @@ class TableBase(MutableMapping):
                 ct.cast(key_p, ct.c_void_p),
                 ct.cast(leaf_p, ct.c_void_p), 0)
         if res < 0:
-            raise Exception("Could not update table")
+            errstr = os.strerror(ct.get_errno())
+            raise Exception("Could not update table: %s" % errstr)
 
     # override the MutableMapping's implementation of these since they
     # don't handle KeyError nicely
@@ -403,6 +405,17 @@ class PerfEventArray(ArrayBase):
             lib.perf_reader_free(reader)
             self.bpf._del_kprobe((id(self), key))
         del self._cbs[key]
+
+    def open_perf_event(self, typ, config):
+        for i in range(0, multiprocessing.cpu_count()):
+            self._open_perf_event(i, typ, config)
+
+    def _open_perf_event(self, cpu, typ, config):
+        fd = lib.bpf_open_perf_event(typ, config, -1, cpu)
+        if fd < 0:
+            raise Exception("bpf_open_perf_event failed")
+        self[self.Key(cpu)] = self.Leaf(fd)
+
 
 class PerCpuHash(HashTable):
     def __init__(self, *args, **kwargs):
